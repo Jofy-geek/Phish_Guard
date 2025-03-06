@@ -4,27 +4,90 @@ import { useState, useEffect } from 'react'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Shield, Zap, Lock, AlertTriangle, Play, Pause, Mic, X } from 'lucide-react'
+import { Input } from "@/components/ui/input"
 
 export default function Component() {
   const [isDetecting, setIsDetecting] = useState(false)
   const [recognizedText, setRecognizedText] = useState("")
   const [phishingProbability, setPhishingProbability] = useState(0)
   const [showAlert, setShowAlert] = useState(false)
+  const [apiEndpoint, setApiEndpoint] = useState("http://localhost:5000")
+  const [isValidEndpoint, setIsValidEndpoint] = useState(true)
+  const [isCheckingEndpoint, setIsCheckingEndpoint] = useState(false)
+
+  const validateEndpoint = async (endpoint: string) => {
+    try {
+      setIsCheckingEndpoint(true);
+      const response = await fetch(`${endpoint}/get_latest`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      // First check if response is ok
+      if (!response.ok) {
+        console.error('Endpoint returned error status:', response.status);
+        const text = await response.text();
+        console.error('Response content:', text);
+        setIsValidEndpoint(false);
+        return false;
+      }
+
+      // Then try to parse JSON
+      try {
+        const data = await response.json();
+        console.log('Endpoint response:', data);
+        setIsValidEndpoint(true);
+        return true;
+      } catch (jsonError) {
+        console.error('Invalid JSON response from endpoint:', jsonError);
+        const text = await response.text();
+        console.error('Raw response:', text);
+        setIsValidEndpoint(false);
+        return false;
+      }
+    } catch (error) {
+      console.error('Failed to connect to endpoint:', error);
+      setIsValidEndpoint(false);
+      if (isDetecting) {
+        setIsDetecting(false);
+      }
+      return false;
+    } finally {
+      setIsCheckingEndpoint(false);
+    }
+  };
+
+  const handleEndpointChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newEndpoint = e.target.value.trim(); // Trim any whitespace
+    setApiEndpoint(newEndpoint);
+    if (newEndpoint) { // Only validate if there's an actual endpoint
+      await validateEndpoint(newEndpoint);
+    }
+  };
 
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
 
     if (isDetecting) {
       interval = setInterval(async () => {
-        const response = await fetch('http://localhost:5000/get_latest');
-        const data = await response.json();
-        setRecognizedText(data.text);
-        setPhishingProbability(data.probability);
+        try {
+          const response = await fetch(`${apiEndpoint}/get_latest`);
+          const data = await response.json();
+          setRecognizedText(data.text);
+          setPhishingProbability(data.probability);
 
-        if (data.high_risk_reached) {
-          setShowAlert(true);
+          if (data.high_risk_reached) {
+            setShowAlert(true);
+            setIsDetecting(false);
+            await fetch(`${apiEndpoint}/stop_detection`, { method: 'POST' });
+          }
+        } catch (error) {
+          console.error('Error fetching data:', error);
           setIsDetecting(false);
-          await fetch('http://localhost:5000/stop_detection', { method: 'POST' });
+          setIsValidEndpoint(false);
         }
       }, 1000);
     }
@@ -32,15 +95,18 @@ export default function Component() {
     return () => {
       if (interval) clearInterval(interval);
     }
-  }, [isDetecting])
+  }, [isDetecting, apiEndpoint])
 
   const handleStartStop = async () => {
     if (isDetecting) {
-      await fetch('http://localhost:5000/stop_detection', { method: 'POST' });
+      await fetch(`${apiEndpoint}/stop_detection`, { method: 'POST' });
+      setIsDetecting(false);
     } else {
-      await fetch('http://localhost:5000/start_detection', { method: 'POST' });
+      if (await validateEndpoint(apiEndpoint)) {
+        await fetch(`${apiEndpoint}/start_detection`, { method: 'POST' });
+        setIsDetecting(true);
+      }
     }
-    setIsDetecting(!isDetecting);
   }
 
   const getRiskLevel = (probability: number) => {
@@ -111,6 +177,20 @@ export default function Component() {
             </CardHeader>
             <CardContent>
               <div className="flex flex-col items-center space-y-4">
+                <div className="w-full flex items-center space-x-2 mb-4">
+                  <Input
+                    type="text"
+                    placeholder="API Endpoint"
+                    value={apiEndpoint}
+                    onChange={handleEndpointChange}
+                    className={`flex-1 bg-gray-800 text-gray-100 border-gray-600 ${
+                      !isValidEndpoint ? 'border-red-500' : isCheckingEndpoint ? 'border-yellow-500' : 'border-green-500'
+                    }`}
+                  />
+                  {!isValidEndpoint && (
+                    <p className="text-red-500 text-sm">Cannot connect to endpoint</p>
+                  )}
+                </div>
                 <div className="w-full h-40 bg-gray-800 rounded-lg flex flex-col items-center justify-center p-4">
                   {isDetecting ? (
                     <>
